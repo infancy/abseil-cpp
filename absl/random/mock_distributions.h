@@ -27,6 +27,11 @@
 // More information about the Googletest testing framework is available at
 // https://github.com/google/googletest
 //
+// EXPECT_CALL and ON_CALL need to be made within the same DLL component as
+// the call to absl::Uniform and related methods, otherwise mocking will fail
+// since the  underlying implementation creates a type-specific pointer which
+// will be distinct across different DLL boundaries.
+//
 // Example:
 //
 //   absl::MockingBitGen mock;
@@ -53,6 +58,7 @@
 #include "absl/random/mocking_bit_gen.h"
 
 namespace absl {
+ABSL_NAMESPACE_BEGIN
 
 // -----------------------------------------------------------------------------
 // absl::MockUniform
@@ -254,6 +260,7 @@ using MockZipf =
                                      IntType(MockingBitGen&, IntType, double,
                                              double)>;
 
+ABSL_NAMESPACE_END
 }  // namespace absl
 
 #endif  // ABSL_RANDOM_MOCK_DISTRIBUTIONS_H_

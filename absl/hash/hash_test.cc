@@ -42,6 +42,7 @@
 #include "absl/hash/internal/spy_hash_state.h"
 #include "absl/meta/type_traits.h"
 #include "absl/numeric/int128.h"
+#include "absl/strings/cord_test_helpers.h"
 
 namespace {
 
@@ -269,6 +270,22 @@ struct WrapInTuple {
   }
 };
 
+absl::Cord FlatCord(absl::string_view sv) {
+  absl::Cord c(sv);
+  c.Flatten();
+  return c;
+}
+
+absl::Cord FragmentedCord(absl::string_view sv) {
+  if (sv.size() < 2) {
+    return absl::Cord(sv);
+  }
+  size_t halfway = sv.size() / 2;
+  std::vector<absl::string_view> parts = {sv.substr(0, halfway),
+                                          sv.substr(halfway)};
+  return absl::MakeFragmentedCord(parts);
+}
+
 TEST(HashValueTest, Strings) {
   EXPECT_TRUE((is_hashable<std::string>::value));
 
@@ -277,25 +294,29 @@ TEST(HashValueTest, Strings) {
   const std::string large = std::string(2048, 'x');  // multiple of chunk size
   const std::string huge = std::string(5000, 'a');   // not a multiple
 
-  EXPECT_TRUE(absl::VerifyTypeImplementsAbslHashCorrectly(std::make_tuple(
-      std::string(), absl::string_view(),
-      std::string(""), absl::string_view(""),
-      std::string(small), absl::string_view(small),
-      std::string(dup), absl::string_view(dup),
-      std::string(large), absl::string_view(large),
-      std::string(huge), absl::string_view(huge))));
+  EXPECT_TRUE(absl::VerifyTypeImplementsAbslHashCorrectly(std::make_tuple(  //
+      std::string(), absl::string_view(), absl::Cord(),                     //
+      std::string(""), absl::string_view(""), absl::Cord(""),               //
+      std::string(small), absl::string_view(small), absl::Cord(small),      //
+      std::string(dup), absl::string_view(dup), absl::Cord(dup),            //
+      std::string(large), absl::string_view(large), absl::Cord(large),      //
+      std::string(huge), absl::string_view(huge), FlatCord(huge),           //
+      FragmentedCord(huge))));
 
   // Also check that nested types maintain the same hash.
   const WrapInTuple t{};
-  EXPECT_TRUE(absl::VerifyTypeImplementsAbslHashCorrectly(std::make_tuple(
-      t(std::string()), t(absl::string_view()),
-      t(std::string("")), t(absl::string_view("")),
-      t(std::string(small)), t(absl::string_view(small)),
-      t(std::string(dup)), t(absl::string_view(dup)),
-      t(std::string(large)), t(absl::string_view(large)),
-      t(std::string(huge)), t(absl::string_view(huge)))));
+  EXPECT_TRUE(absl::VerifyTypeImplementsAbslHashCorrectly(std::make_tuple(  //
+      t(std::string()), t(absl::string_view()), t(absl::Cord()),            //
+      t(std::string("")), t(absl::string_view("")), t(absl::Cord("")),      //
+      t(std::string(small)), t(absl::string_view(small)),                   //
+          t(absl::Cord(small)),                                             //
+      t(std::string(dup)), t(absl::string_view(dup)), t(absl::Cord(dup)),   //
+      t(std::string(large)), t(absl::string_view(large)),                   //
+          t(absl::Cord(large)),                                             //
+      t(std::string(huge)), t(absl::string_view(huge)),                     //
+          t(FlatCord(huge)), t(FragmentedCord(huge)))));
 
-  // Make sure that hashing a `const char*` does not use its std::string-value.
+  // Make sure that hashing a `const char*` does not use its string-value.
   EXPECT_NE(SpyHash(static_cast<const char*>("ABC")),
             SpyHash(absl::string_view("ABC")));
 }
@@ -386,7 +407,7 @@ using IntSequenceTypes =
 INSTANTIATE_TYPED_TEST_CASE_P(My, HashValueSequenceTest, IntSequenceTypes);
 
 // Private type that only supports AbslHashValue to make sure our chosen hash
-// implentation is recursive within absl::Hash.
+// implementation is recursive within absl::Hash.
 // It uses std::abs() on the value to provide different bitwise representations
 // of the same logical value.
 struct Private {
@@ -460,7 +481,7 @@ struct DummyFooBar {
     const char* bar = "bar";
     h = H::combine_contiguous(std::move(h), foo, 3);
     h = H::combine_contiguous(std::move(h), bar, 3);
-    return std::move(h);
+    return h;
   }
 };
 
@@ -491,7 +512,7 @@ TEST(HashValueTest, CombinePiecewiseBuffer) {
     SCOPED_TRACE(big_buffer_size);
     std::string big_buffer;
     for (int i = 0; i < big_buffer_size; ++i) {
-      // Arbitrary std::string
+      // Arbitrary string
       big_buffer.push_back(32 + (i * (i / 3)) % 64);
     }
     auto big_buffer_hash = hash(PiecewiseHashTester(big_buffer));
@@ -560,6 +581,24 @@ TEST(HashValueTest, Maps) {
       MM{{1, "foo"}, {1, "foo"}, {43, "bar"}}, MM{{1, "foo"}, {43, "baz"}})));
 }
 
+TEST(HashValueTest, ReferenceWrapper) {
+  EXPECT_TRUE(is_hashable<std::reference_wrapper<Private>>::value);
+
+  Private p1{1}, p10{10};
+  EXPECT_TRUE(absl::VerifyTypeImplementsAbslHashCorrectly(std::make_tuple(
+      p1, p10, std::ref(p1), std::ref(p10), std::cref(p1), std::cref(p10))));
+
+  EXPECT_TRUE(is_hashable<std::reference_wrapper<int>>::value);
+  int one = 1, ten = 10;
+  EXPECT_TRUE(absl::VerifyTypeImplementsAbslHashCorrectly(std::make_tuple(
+      one, ten, std::ref(one), std::ref(ten), std::cref(one), std::cref(ten))));
+
+  EXPECT_TRUE(absl::VerifyTypeImplementsAbslHashCorrectly(
+      std::make_tuple(std::tuple<std::reference_wrapper<int>>(std::ref(one)),
+                      std::tuple<std::reference_wrapper<int>>(std::ref(ten)),
+                      std::tuple<int>(one), std::tuple<int>(ten))));
+}
+
 template <typename T, typename = void>
 struct IsHashCallable : std::false_type {};
 
@@ -595,7 +634,10 @@ TEST(IsHashableTest, PoisonHash) {
   EXPECT_FALSE(absl::is_copy_assignable<absl::Hash<X>>::value);
   EXPECT_FALSE(absl::is_move_assignable<absl::Hash<X>>::value);
   EXPECT_FALSE(IsHashCallable<X>::value);
+#if !defined(__GNUC__) || __GNUC__ < 9
+  // This doesn't compile on GCC 9.
   EXPECT_FALSE(IsAggregateInitializable<absl::Hash<X>>::value);
+#endif
 }
 #endif  // ABSL_META_INTERNAL_STD_HASH_SFINAE_FRIENDLY_
 
@@ -681,6 +723,7 @@ H AbslHashValue(H state, CustomHashType<Tags...> t) {
 }  // namespace
 
 namespace absl {
+ABSL_NAMESPACE_BEGIN
 namespace hash_internal {
 template <InvokeTag... Tags>
 struct is_uniquely_represented<
@@ -688,6 +731,7 @@ struct is_uniquely_represented<
     typename EnableIfContained<InvokeTag::kUniquelyRepresented, Tags...>::type>
     : std::true_type {};
 }  // namespace hash_internal
+ABSL_NAMESPACE_END
 }  // namespace absl
 
 #if ABSL_HASH_INTERNAL_SUPPORT_LEGACY_HASH_

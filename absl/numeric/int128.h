@@ -49,6 +49,7 @@
 #endif  // defined(_MSC_VER)
 
 namespace absl {
+ABSL_NAMESPACE_BEGIN
 
 class int128;
 
@@ -233,7 +234,7 @@ class
 // Prefer to use the constexpr `Uint128Max()`.
 //
 // TODO(absl-team) deprecate kuint128max once migration tool is released.
-extern const uint128 kuint128max;
+ABSL_DLL extern const uint128 kuint128max;
 
 // allow uint128 to be logged
 std::ostream& operator<<(std::ostream& os, uint128 v);
@@ -245,6 +246,7 @@ constexpr uint128 Uint128Max() {
                  (std::numeric_limits<uint64_t>::max)());
 }
 
+ABSL_NAMESPACE_END
 }  // namespace absl
 
 // Specialized numeric_limits for uint128.
@@ -293,6 +295,7 @@ class numeric_limits<absl::uint128> {
 }  // namespace std
 
 namespace absl {
+ABSL_NAMESPACE_BEGIN
 
 // int128
 //
@@ -478,6 +481,7 @@ constexpr int128 Int128Min() {
   return int128((std::numeric_limits<int64_t>::min)(), 0);
 }
 
+ABSL_NAMESPACE_END
 }  // namespace absl
 
 // Specialized numeric_limits for int128.
@@ -529,6 +533,7 @@ class numeric_limits<absl::int128> {
 //                      Implementation details follow
 // --------------------------------------------------------------------------
 namespace absl {
+ABSL_NAMESPACE_BEGIN
 
 constexpr uint128 MakeUint128(uint64_t high, uint64_t low) {
   return uint128(high, low);
@@ -787,28 +792,21 @@ inline bool operator!=(uint128 lhs, uint128 rhs) {
 }
 
 inline bool operator<(uint128 lhs, uint128 rhs) {
+#ifdef ABSL_HAVE_INTRINSIC_INT128
+  return static_cast<unsigned __int128>(lhs) <
+         static_cast<unsigned __int128>(rhs);
+#else
   return (Uint128High64(lhs) == Uint128High64(rhs))
              ? (Uint128Low64(lhs) < Uint128Low64(rhs))
              : (Uint128High64(lhs) < Uint128High64(rhs));
+#endif
 }
 
-inline bool operator>(uint128 lhs, uint128 rhs) {
-  return (Uint128High64(lhs) == Uint128High64(rhs))
-             ? (Uint128Low64(lhs) > Uint128Low64(rhs))
-             : (Uint128High64(lhs) > Uint128High64(rhs));
-}
+inline bool operator>(uint128 lhs, uint128 rhs) { return rhs < lhs; }
 
-inline bool operator<=(uint128 lhs, uint128 rhs) {
-  return (Uint128High64(lhs) == Uint128High64(rhs))
-             ? (Uint128Low64(lhs) <= Uint128Low64(rhs))
-             : (Uint128High64(lhs) <= Uint128High64(rhs));
-}
+inline bool operator<=(uint128 lhs, uint128 rhs) { return !(rhs < lhs); }
 
-inline bool operator>=(uint128 lhs, uint128 rhs) {
-  return (Uint128High64(lhs) == Uint128High64(rhs))
-             ? (Uint128Low64(lhs) >= Uint128Low64(rhs))
-             : (Uint128High64(lhs) >= Uint128High64(rhs));
-}
+inline bool operator>=(uint128 lhs, uint128 rhs) { return !(lhs < rhs); }
 
 // Unary operators.
 
@@ -865,6 +863,9 @@ inline uint128& uint128::operator^=(uint128 other) {
 // Arithmetic operators.
 
 inline uint128 operator<<(uint128 lhs, int amount) {
+#ifdef ABSL_HAVE_INTRINSIC_INT128
+  return static_cast<unsigned __int128>(lhs) << amount;
+#else
   // uint64_t shifts of >= 64 are undefined, so we will need some
   // special-casing.
   if (amount < 64) {
@@ -876,9 +877,13 @@ inline uint128 operator<<(uint128 lhs, int amount) {
     return lhs;
   }
   return MakeUint128(Uint128Low64(lhs) << (amount - 64), 0);
+#endif
 }
 
 inline uint128 operator>>(uint128 lhs, int amount) {
+#ifdef ABSL_HAVE_INTRINSIC_INT128
+  return static_cast<unsigned __int128>(lhs) >> amount;
+#else
   // uint64_t shifts of >= 64 are undefined, so we will need some
   // special-casing.
   if (amount < 64) {
@@ -890,6 +895,7 @@ inline uint128 operator>>(uint128 lhs, int amount) {
     return lhs;
   }
   return MakeUint128(0, Uint128High64(lhs) >> (amount - 64));
+#endif
 }
 
 inline uint128 operator+(uint128 lhs, uint128 rhs) {
@@ -1078,6 +1084,7 @@ constexpr int64_t BitCastToSigned(uint64_t v) {
 #include "absl/numeric/int128_no_intrinsic.inc"  // IWYU pragma: export
 #endif  // ABSL_HAVE_INTRINSIC_INT128
 
+ABSL_NAMESPACE_END
 }  // namespace absl
 
 #undef ABSL_INTERNAL_WCHAR_T

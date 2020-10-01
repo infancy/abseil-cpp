@@ -19,12 +19,21 @@ absl_cc_library(
     stacktrace
   HDRS
     "stacktrace.h"
+    "internal/stacktrace_aarch64-inl.inc"
+    "internal/stacktrace_arm-inl.inc"
+    "internal/stacktrace_config.h"
+    "internal/stacktrace_generic-inl.inc"
+    "internal/stacktrace_powerpc-inl.inc"
+    "internal/stacktrace_unimplemented-inl.inc"
+    "internal/stacktrace_win32-inl.inc"
+    "internal/stacktrace_x86-inl.inc"
   SRCS
     "stacktrace.cc"
   COPTS
     ${ABSL_DEFAULT_COPTS}
   DEPS
     absl::debugging_internal
+    absl::config
     absl::core_headers
   PUBLIC
 )
@@ -37,6 +46,7 @@ absl_cc_library(
     "internal/symbolize.h"
   SRCS
     "symbolize.cc"
+    "symbolize_darwin.inc"
     "symbolize_elf.inc"
     "symbolize_unimplemented.inc"
     "symbolize_win32.inc"
@@ -49,10 +59,12 @@ absl_cc_library(
     absl::debugging_internal
     absl::demangle_internal
     absl::base
+    absl::config
     absl::core_headers
     absl::dynamic_annotations
     absl::malloc_internal
     absl::raw_logging_internal
+    absl::strings
   PUBLIC
 )
 
@@ -70,9 +82,11 @@ absl_cc_test(
     absl::stack_consumption
     absl::symbolize
     absl::base
+    absl::config
     absl::core_headers
     absl::memory
     absl::raw_logging_internal
+    absl::strings
     gmock
 )
 
@@ -88,6 +102,7 @@ absl_cc_library(
   DEPS
     absl::stacktrace
     absl::symbolize
+    absl::config
     absl::core_headers
     absl::raw_logging_internal
 )
@@ -107,6 +122,7 @@ absl_cc_library(
     absl::base
     absl::config
     absl::core_headers
+    absl::errno_saver
     absl::raw_logging_internal
   PUBLIC
 )
@@ -134,14 +150,6 @@ absl_cc_library(
   HDRS
     "internal/address_is_readable.h"
     "internal/elf_mem_image.h"
-    "internal/stacktrace_aarch64-inl.inc"
-    "internal/stacktrace_arm-inl.inc"
-    "internal/stacktrace_config.h"
-    "internal/stacktrace_generic-inl.inc"
-    "internal/stacktrace_powerpc-inl.inc"
-    "internal/stacktrace_unimplemented-inl.inc"
-    "internal/stacktrace_win32-inl.inc"
-    "internal/stacktrace_x86-inl.inc"
     "internal/vdso_support.h"
   SRCS
     "internal/address_is_readable.cc"
@@ -151,7 +159,9 @@ absl_cc_library(
     ${ABSL_DEFAULT_COPTS}
   DEPS
     absl::core_headers
+    absl::config
     absl::dynamic_annotations
+    absl::errno_saver
     absl::raw_logging_internal
 )
 
@@ -180,6 +190,7 @@ absl_cc_test(
   DEPS
     absl::demangle_internal
     absl::stack_consumption
+    absl::config
     absl::core_headers
     absl::memory
     absl::raw_logging_internal
@@ -196,6 +207,7 @@ absl_cc_library(
   COPTS
     ${ABSL_DEFAULT_COPTS}
   DEPS
+    absl::config
     absl::core_headers
   PUBLIC
 )
@@ -293,6 +305,7 @@ absl_cc_library(
   COPTS
     ${ABSL_DEFAULT_COPTS}
   DEPS
+    absl::config
     absl::core_headers
     absl::raw_logging_internal
   TESTONLY

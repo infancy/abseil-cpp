@@ -41,6 +41,7 @@
 #include "absl/base/port.h"
 
 namespace absl {
+ABSL_NAMESPACE_BEGIN
 
 class once_flag;
 
@@ -174,7 +175,7 @@ void CallOnceImpl(std::atomic<uint32_t>* control,
                                        std::memory_order_relaxed) ||
       base_internal::SpinLockWait(control, ABSL_ARRAYSIZE(trans), trans,
                                   scheduling_mode) == kOnceInit) {
-    base_internal::Invoke(std::forward<Callable>(fn),
+    base_internal::invoke(std::forward<Callable>(fn),
                           std::forward<Args>(args)...);
     // The call to SpinLockWake below is an optimization, because the waiter
     // in SpinLockWait is waiting with a short timeout. The atomic load/store
@@ -219,6 +220,7 @@ void call_once(absl::once_flag& flag, Callable&& fn, Args&&... args) {
   }
 }
 
+ABSL_NAMESPACE_END
 }  // namespace absl
 
 #endif  // ABSL_BASE_CALL_ONCE_H_

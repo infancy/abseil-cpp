@@ -26,6 +26,7 @@
 #include "absl/meta/type_traits.h"
 
 namespace absl {
+ABSL_NAMESPACE_BEGIN
 namespace container_internal {
 
 // A common base class for btree_set, btree_map, btree_multiset, and
@@ -67,10 +68,10 @@ class btree_container {
   explicit btree_container(const key_compare &comp,
                            const allocator_type &alloc = allocator_type())
       : tree_(comp, alloc) {}
-  btree_container(const btree_container &x) = default;
-  btree_container(btree_container &&x) noexcept = default;
-  btree_container &operator=(const btree_container &x) = default;
-  btree_container &operator=(btree_container &&x) noexcept(
+  btree_container(const btree_container &other) = default;
+  btree_container(btree_container &&other) noexcept = default;
+  btree_container &operator=(const btree_container &other) = default;
+  btree_container &operator=(btree_container &&other) noexcept(
       std::is_nothrow_move_assignable<Tree>::value) = default;
 
   // Iterator routines.
@@ -135,7 +136,7 @@ class btree_container {
   iterator erase(const_iterator iter) { return tree_.erase(iterator(iter)); }
   iterator erase(iterator iter) { return tree_.erase(iter); }
   iterator erase(const_iterator first, const_iterator last) {
-    return tree_.erase(iterator(first), iterator(last)).second;
+    return tree_.erase_range(iterator(first), iterator(last)).second;
   }
 
   // Extract routines.
@@ -150,10 +151,9 @@ class btree_container {
     return extract(iterator(position));
   }
 
- public:
   // Utility routines.
   void clear() { tree_.clear(); }
-  void swap(btree_container &x) { tree_.swap(x.tree_); }
+  void swap(btree_container &other) { tree_.swap(other.tree_); }
   void verify() const { tree_.verify(); }
 
   // Size routines.
@@ -256,42 +256,40 @@ class btree_set_container : public btree_container<Tree> {
   }
 
   // Insertion routines.
-  std::pair<iterator, bool> insert(const value_type &x) {
-    return this->tree_.insert_unique(params_type::key(x), x);
+  std::pair<iterator, bool> insert(const value_type &v) {
+    return this->tree_.insert_unique(params_type::key(v), v);
   }
-  std::pair<iterator, bool> insert(value_type &&x) {
-    return this->tree_.insert_unique(params_type::key(x), std::move(x));
+  std::pair<iterator, bool> insert(value_type &&v) {
+    return this->tree_.insert_unique(params_type::key(v), std::move(v));
   }
   template <typename... Args>
   std::pair<iterator, bool> emplace(Args &&... args) {
     init_type v(std::forward<Args>(args)...);
     return this->tree_.insert_unique(params_type::key(v), std::move(v));
   }
-  iterator insert(const_iterator position, const value_type &x) {
+  iterator insert(const_iterator hint, const value_type &v) {
     return this->tree_
-        .insert_hint_unique(iterator(position), params_type::key(x), x)
+        .insert_hint_unique(iterator(hint), params_type::key(v), v)
         .first;
   }
-  iterator insert(const_iterator position, value_type &&x) {
+  iterator insert(const_iterator hint, value_type &&v) {
     return this->tree_
-        .insert_hint_unique(iterator(position), params_type::key(x),
-                            std::move(x))
+        .insert_hint_unique(iterator(hint), params_type::key(v), std::move(v))
         .first;
   }
   template <typename... Args>
-  iterator emplace_hint(const_iterator position, Args &&... args) {
+  iterator emplace_hint(const_iterator hint, Args &&... args) {
     init_type v(std::forward<Args>(args)...);
     return this->tree_
-        .insert_hint_unique(iterator(position), params_type::key(v),
-                            std::move(v))
+        .insert_hint_unique(iterator(hint), params_type::key(v), std::move(v))
         .first;
   }
   template <typename InputIterator>
   void insert(InputIterator b, InputIterator e) {
-    this->tree_.insert_iterator_unique(b, e);
+    this->tree_.insert_iterator_unique(b, e, 0);
   }
   void insert(std::initializer_list<init_type> init) {
-    this->tree_.insert_iterator_unique(init.begin(), init.end());
+    this->tree_.insert_iterator_unique(init.begin(), init.end(), 0);
   }
   insert_return_type insert(node_type &&node) {
     if (!node) return {this->end(), false, node_type()};
@@ -315,6 +313,8 @@ class btree_set_container : public btree_container<Tree> {
   }
 
   // Deletion routines.
+  // TODO(ezb): we should support heterogeneous comparators that have different
+  // behavior for K!=key_type.
   template <typename K = key_type>
   size_type erase(const key_arg<K> &key) {
     return this->tree_.erase_unique(key);
@@ -343,7 +343,7 @@ class btree_set_container : public btree_container<Tree> {
           int> = 0>
   void merge(btree_container<T> &src) {  // NOLINT
     for (auto src_it = src.begin(); src_it != src.end();) {
-      if (insert(std::move(*src_it)).second) {
+      if (insert(std::move(params_type::element(src_it.slot()))).second) {
         src_it = src.erase(src_it);
       } else {
         ++src_it;
@@ -371,7 +371,7 @@ class btree_map_container : public btree_set_container<Tree> {
   using super_type = btree_set_container<Tree>;
   using params_type = typename Tree::params_type;
 
- protected:
+ private:
   template <class K>
   using key_arg = typename super_type::template key_arg<K>;
 
@@ -389,50 +389,74 @@ class btree_map_container : public btree_set_container<Tree> {
   btree_map_container() {}
 
   // Insertion routines.
-  template <typename... Args>
-  std::pair<iterator, bool> try_emplace(const key_type &k, Args &&... args) {
-    return this->tree_.insert_unique(
-        k, std::piecewise_construct, std::forward_as_tuple(k),
-        std::forward_as_tuple(std::forward<Args>(args)...));
+  // Note: the nullptr template arguments and extra `const M&` overloads allow
+  // for supporting bitfield arguments.
+  template <typename K = key_type, class M>
+  std::pair<iterator, bool> insert_or_assign(const key_arg<K> &k,
+                                             const M &obj) {
+    return insert_or_assign_impl(k, obj);
   }
-  template <typename... Args>
-  std::pair<iterator, bool> try_emplace(key_type &&k, Args &&... args) {
-    // Note: `key_ref` exists to avoid a ClangTidy warning about moving from `k`
-    // and then using `k` unsequenced. This is safe because the move is into a
-    // forwarding reference and insert_unique guarantees that `key` is never
-    // referenced after consuming `args`.
-    const key_type& key_ref = k;
-    return this->tree_.insert_unique(
-        key_ref, std::piecewise_construct, std::forward_as_tuple(std::move(k)),
-        std::forward_as_tuple(std::forward<Args>(args)...));
+  template <typename K = key_type, class M, K * = nullptr>
+  std::pair<iterator, bool> insert_or_assign(key_arg<K> &&k, const M &obj) {
+    return insert_or_assign_impl(std::forward<K>(k), obj);
   }
-  template <typename... Args>
-  iterator try_emplace(const_iterator hint, const key_type &k,
+  template <typename K = key_type, class M, M * = nullptr>
+  std::pair<iterator, bool> insert_or_assign(const key_arg<K> &k, M &&obj) {
+    return insert_or_assign_impl(k, std::forward<M>(obj));
+  }
+  template <typename K = key_type, class M, K * = nullptr, M * = nullptr>
+  std::pair<iterator, bool> insert_or_assign(key_arg<K> &&k, M &&obj) {
+    return insert_or_assign_impl(std::forward<K>(k), std::forward<M>(obj));
+  }
+  template <typename K = key_type, class M>
+  iterator insert_or_assign(const_iterator hint, const key_arg<K> &k,
+                            const M &obj) {
+    return insert_or_assign_hint_impl(hint, k, obj);
+  }
+  template <typename K = key_type, class M, K * = nullptr>
+  iterator insert_or_assign(const_iterator hint, key_arg<K> &&k, const M &obj) {
+    return insert_or_assign_hint_impl(hint, std::forward<K>(k), obj);
+  }
+  template <typename K = key_type, class M, M * = nullptr>
+  iterator insert_or_assign(const_iterator hint, const key_arg<K> &k, M &&obj) {
+    return insert_or_assign_hint_impl(hint, k, std::forward<M>(obj));
+  }
+  template <typename K = key_type, class M, K * = nullptr, M * = nullptr>
+  iterator insert_or_assign(const_iterator hint, key_arg<K> &&k, M &&obj) {
+    return insert_or_assign_hint_impl(hint, std::forward<K>(k),
+                                      std::forward<M>(obj));
+  }
+
+  template <typename K = key_type, typename... Args,
+            typename absl::enable_if_t<
+                !std::is_convertible<K, const_iterator>::value, int> = 0>
+  std::pair<iterator, bool> try_emplace(const key_arg<K> &k, Args &&... args) {
+    return try_emplace_impl(k, std::forward<Args>(args)...);
+  }
+  template <typename K = key_type, typename... Args,
+            typename absl::enable_if_t<
+                !std::is_convertible<K, const_iterator>::value, int> = 0>
+  std::pair<iterator, bool> try_emplace(key_arg<K> &&k, Args &&... args) {
+    return try_emplace_impl(std::forward<K>(k), std::forward<Args>(args)...);
+  }
+  template <typename K = key_type, typename... Args>
+  iterator try_emplace(const_iterator hint, const key_arg<K> &k,
                        Args &&... args) {
-    return this->tree_
-        .insert_hint_unique(iterator(hint), k, std::piecewise_construct,
-                            std::forward_as_tuple(k),
-                            std::forward_as_tuple(std::forward<Args>(args)...))
-        .first;
+    return try_emplace_hint_impl(hint, k, std::forward<Args>(args)...);
   }
-  template <typename... Args>
-  iterator try_emplace(const_iterator hint, key_type &&k, Args &&... args) {
-    // Note: `key_ref` exists to avoid a ClangTidy warning about moving from `k`
-    // and then using `k` unsequenced. This is safe because the move is into a
-    // forwarding reference and insert_hint_unique guarantees that `key` is
-    // never referenced after consuming `args`.
-    const key_type& key_ref = k;
-    return this->tree_
-        .insert_hint_unique(iterator(hint), key_ref, std::piecewise_construct,
-                            std::forward_as_tuple(std::move(k)),
-                            std::forward_as_tuple(std::forward<Args>(args)...))
-        .first;
+  template <typename K = key_type, typename... Args>
+  iterator try_emplace(const_iterator hint, key_arg<K> &&k, Args &&... args) {
+    return try_emplace_hint_impl(hint, std::forward<K>(k),
+                                 std::forward<Args>(args)...);
   }
-  mapped_type &operator[](const key_type &k) {
+
+  template <typename K = key_type>
+  mapped_type &operator[](const key_arg<K> &k) {
     return try_emplace(k).first->second;
   }
-  mapped_type &operator[](key_type &&k) {
-    return try_emplace(std::move(k)).first->second;
+  template <typename K = key_type>
+  mapped_type &operator[](key_arg<K> &&k) {
+    return try_emplace(std::forward<K>(k)).first->second;
   }
 
   template <typename K = key_type>
@@ -448,6 +472,40 @@ class btree_map_container : public btree_set_container<Tree> {
     if (it == this->end())
       base_internal::ThrowStdOutOfRange("absl::btree_map::at");
     return it->second;
+  }
+
+ private:
+  // Note: when we call `std::forward<M>(obj)` twice, it's safe because
+  // insert_unique/insert_hint_unique are guaranteed to not consume `obj` when
+  // `ret.second` is false.
+  template <class K, class M>
+  std::pair<iterator, bool> insert_or_assign_impl(K &&k, M &&obj) {
+    const std::pair<iterator, bool> ret =
+        this->tree_.insert_unique(k, std::forward<K>(k), std::forward<M>(obj));
+    if (!ret.second) ret.first->second = std::forward<M>(obj);
+    return ret;
+  }
+  template <class K, class M>
+  iterator insert_or_assign_hint_impl(const_iterator hint, K &&k, M &&obj) {
+    const std::pair<iterator, bool> ret = this->tree_.insert_hint_unique(
+        iterator(hint), k, std::forward<K>(k), std::forward<M>(obj));
+    if (!ret.second) ret.first->second = std::forward<M>(obj);
+    return ret.first;
+  }
+
+  template <class K, class... Args>
+  std::pair<iterator, bool> try_emplace_impl(K &&k, Args &&... args) {
+    return this->tree_.insert_unique(
+        k, std::piecewise_construct, std::forward_as_tuple(std::forward<K>(k)),
+        std::forward_as_tuple(std::forward<Args>(args)...));
+  }
+  template <class K, class... Args>
+  iterator try_emplace_hint_impl(const_iterator hint, K &&k, Args &&... args) {
+    return this->tree_
+        .insert_hint_unique(iterator(hint), k, std::piecewise_construct,
+                            std::forward_as_tuple(std::forward<K>(k)),
+                            std::forward_as_tuple(std::forward<Args>(args)...))
+        .first;
   }
 };
 
@@ -498,15 +556,15 @@ class btree_multiset_container : public btree_container<Tree> {
   }
 
   // Insertion routines.
-  iterator insert(const value_type &x) { return this->tree_.insert_multi(x); }
-  iterator insert(value_type &&x) {
-    return this->tree_.insert_multi(std::move(x));
+  iterator insert(const value_type &v) { return this->tree_.insert_multi(v); }
+  iterator insert(value_type &&v) {
+    return this->tree_.insert_multi(std::move(v));
   }
-  iterator insert(const_iterator position, const value_type &x) {
-    return this->tree_.insert_hint_multi(iterator(position), x);
+  iterator insert(const_iterator hint, const value_type &v) {
+    return this->tree_.insert_hint_multi(iterator(hint), v);
   }
-  iterator insert(const_iterator position, value_type &&x) {
-    return this->tree_.insert_hint_multi(iterator(position), std::move(x));
+  iterator insert(const_iterator hint, value_type &&v) {
+    return this->tree_.insert_hint_multi(iterator(hint), std::move(v));
   }
   template <typename InputIterator>
   void insert(InputIterator b, InputIterator e) {
@@ -520,9 +578,9 @@ class btree_multiset_container : public btree_container<Tree> {
     return this->tree_.insert_multi(init_type(std::forward<Args>(args)...));
   }
   template <typename... Args>
-  iterator emplace_hint(const_iterator position, Args &&... args) {
+  iterator emplace_hint(const_iterator hint, Args &&... args) {
     return this->tree_.insert_hint_multi(
-        iterator(position), init_type(std::forward<Args>(args)...));
+        iterator(hint), init_type(std::forward<Args>(args)...));
   }
   iterator insert(node_type &&node) {
     if (!node) return this->end();
@@ -568,8 +626,9 @@ class btree_multiset_container : public btree_container<Tree> {
                            typename T::params_type::is_map_container>>::value,
           int> = 0>
   void merge(btree_container<T> &src) {  // NOLINT
-    insert(std::make_move_iterator(src.begin()),
-           std::make_move_iterator(src.end()));
+    for (auto src_it = src.begin(), end = src.end(); src_it != end; ++src_it) {
+      insert(std::move(params_type::element(src_it.slot())));
+    }
     src.clear();
   }
 
@@ -602,6 +661,7 @@ class btree_multimap_container : public btree_multiset_container<Tree> {
 };
 
 }  // namespace container_internal
+ABSL_NAMESPACE_END
 }  // namespace absl
 
 #endif  // ABSL_CONTAINER_INTERNAL_BTREE_CONTAINER_H_

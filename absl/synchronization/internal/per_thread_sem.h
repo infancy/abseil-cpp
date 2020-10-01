@@ -32,6 +32,7 @@
 #include "absl/synchronization/internal/kernel_timeout.h"
 
 namespace absl {
+ABSL_NAMESPACE_BEGIN
 
 class Mutex;
 
@@ -77,7 +78,7 @@ class PerThreadSem {
   // !t.has_timeout() => Wait(t) will return true.
   static inline bool Wait(KernelTimeout t);
 
-  // White-listed callers.
+  // Permitted callers.
   friend class PerThreadSemTest;
   friend class absl::Mutex;
   friend absl::base_internal::ThreadIdentity* CreateThreadIdentity();
@@ -85,6 +86,7 @@ class PerThreadSem {
 };
 
 }  // namespace synchronization_internal
+ABSL_NAMESPACE_END
 }  // namespace absl
 
 // In some build configurations we pass --detect-odr-violations to the

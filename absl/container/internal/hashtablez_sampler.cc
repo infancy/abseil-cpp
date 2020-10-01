@@ -28,6 +28,7 @@
 #include "absl/synchronization/mutex.h"
 
 namespace absl {
+ABSL_NAMESPACE_BEGIN
 namespace container_internal {
 constexpr int HashtablezInfo::kMaxStackDepth;
 
@@ -38,17 +39,16 @@ ABSL_CONST_INIT std::atomic<bool> g_hashtablez_enabled{
 ABSL_CONST_INIT std::atomic<int32_t> g_hashtablez_sample_parameter{1 << 10};
 ABSL_CONST_INIT std::atomic<int32_t> g_hashtablez_max_samples{1 << 20};
 
-#if ABSL_PER_THREAD_TLS == 1
+#if defined(ABSL_INTERNAL_HASHTABLEZ_SAMPLE)
 ABSL_PER_THREAD_TLS_KEYWORD absl::base_internal::ExponentialBiased
     g_exponential_biased_generator;
 #endif
 
 }  // namespace
 
-#if ABSL_PER_THREAD_TLS == 1
+#if defined(ABSL_INTERNAL_HASHTABLEZ_SAMPLE)
 ABSL_PER_THREAD_TLS_KEYWORD int64_t global_next_sample = 0;
-#endif  // ABSL_PER_THREAD_TLS == 1
-
+#endif  // defined(ABSL_INTERNAL_HASHTABLEZ_SAMPLE)
 
 HashtablezSampler& HashtablezSampler::Global() {
   static auto* sampler = new HashtablezSampler();
@@ -67,6 +67,7 @@ void HashtablezInfo::PrepareForSampling() {
   capacity.store(0, std::memory_order_relaxed);
   size.store(0, std::memory_order_relaxed);
   num_erases.store(0, std::memory_order_relaxed);
+  num_rehashes.store(0, std::memory_order_relaxed);
   max_probe_length.store(0, std::memory_order_relaxed);
   total_probe_length.store(0, std::memory_order_relaxed);
   hashes_bitwise_or.store(0, std::memory_order_relaxed);
@@ -191,7 +192,7 @@ HashtablezInfo* SampleSlow(int64_t* next_sample) {
     return HashtablezSampler::Global().Register();
   }
 
-#if ABSL_PER_THREAD_TLS == 0
+#if !defined(ABSL_INTERNAL_HASHTABLEZ_SAMPLE)
   *next_sample = std::numeric_limits<int64_t>::max();
   return nullptr;
 #else
@@ -226,7 +227,7 @@ void RecordInsertSlow(HashtablezInfo* info, size_t hash,
   // SwissTables probe in groups of 16, so scale this to count items probes and
   // not offset from desired.
   size_t probe_length = distance_from_desired;
-#if SWISSTABLE_HAVE_SSE2
+#if ABSL_INTERNAL_RAW_HASH_SET_HAVE_SSE2
   probe_length /= 16;
 #else
   probe_length /= 8;
@@ -265,4 +266,5 @@ void SetHashtablezMaxSamples(int32_t max) {
 }
 
 }  // namespace container_internal
+ABSL_NAMESPACE_END
 }  // namespace absl
