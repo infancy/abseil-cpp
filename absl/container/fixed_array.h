@@ -117,6 +117,7 @@ class FixedArray {
   using reverse_iterator = std::reverse_iterator<iterator>;
   using const_reverse_iterator = std::reverse_iterator<const_iterator>;
 
+  // 栈上可存放的元素数量, 超出这个值则分配在堆上 Storage::UsingInlinedStorage
   static constexpr size_type inline_elements =
       (N == kFixedArrayUseDefault ? kInlineBytesDefault / sizeof(value_type)
                                   : static_cast<size_type>(N));
@@ -403,6 +404,8 @@ class FixedArray {
   static_assert(sizeof(StorageElement) == sizeof(value_type), "");
   static_assert(alignof(StorageElement) == alignof(value_type), "");
 
+
+
   class NonEmptyInlinedStorage {
    public:
     StorageElement* data() { return reinterpret_cast<StorageElement*>(buff_); }
@@ -415,6 +418,7 @@ class FixedArray {
 #endif  // ADDRESS_SANITIZER
 
    private:
+    // 内存越界检测
     ADDRESS_SANITIZER_REDZONE(redzone_begin_);
     alignas(StorageElement) char buff_[sizeof(StorageElement[inline_elements])];
     ADDRESS_SANITIZER_REDZONE(redzone_end_);
@@ -430,6 +434,8 @@ class FixedArray {
   using InlinedStorage =
       absl::conditional_t<inline_elements == 0, EmptyInlinedStorage,
                           NonEmptyInlinedStorage>;
+
+
 
   // Storage
   //
@@ -462,11 +468,14 @@ class FixedArray {
       return n <= inline_elements;
     }
 
+    //! stack vs heap
     StorageElement* InitializeData() {
       if (UsingInlinedStorage(size())) {
+        // class Storage : public InlinedStorage
         InlinedStorage::AnnotateConstruct(size());
         return InlinedStorage::data();
       } else {
+        // 动态分配时, 栈上的数据不还在?
         return reinterpret_cast<StorageElement*>(
             AllocatorTraits::allocate(alloc(), size()));
       }
@@ -478,7 +487,7 @@ class FixedArray {
   };
 
   Storage storage_;
-};
+}; // class FixedArray
 
 template <typename T, size_t N, typename A>
 constexpr size_t FixedArray<T, N, A>::kInlineBytesDefault;
@@ -508,6 +517,7 @@ void FixedArray<T, N, A>::NonEmptyInlinedStorage::AnnotateDestruct(
 #endif                   // ADDRESS_SANITIZER
   static_cast<void>(n);  // Mark used when not in asan mode
 }
+
 }  // namespace absl
 
 #endif  // ABSL_CONTAINER_FIXED_ARRAY_H_
